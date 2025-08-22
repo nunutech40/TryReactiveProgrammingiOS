@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import Combine
 
 class ViewController: UIViewController {
 
@@ -15,15 +16,12 @@ class ViewController: UIViewController {
     @IBOutlet weak var confirmPasswordTF: UITextField!
     @IBOutlet weak var signUpButton: UIButton!
     
-    private var isNameValid = false
-    private var isEmailValid = false
-    private var isPasswordValid = false
-    private var isConfirmPasswordValid = false
-    
+    var cancellables: Set<AnyCancellable> = []
     
     override func viewDidLoad() {
         super.viewDidLoad()
         setupView()
+        setupCombine()
     }
 
     func setupView() {
@@ -34,6 +32,71 @@ class ViewController: UIViewController {
         for textField in texFields {
             setupTextFiels(for: textField)
         }
+    }
+    
+    func setupCombine() {
+        let namePublisher = NotificationCenter.default
+            .publisher(for: UITextField.textDidChangeNotification, object: nameTF)
+            .map { ($0.object as? UITextField)?.text }
+            .replaceNil(with: "")
+            .map { !$0.isEmpty }
+        
+        namePublisher.sink(receiveValue: { value in
+            self.nameTF.rightViewMode = value ? .never : .always
+        }).store(in: &cancellables)
+        
+        let emailPublisher = NotificationCenter.default
+            .publisher(for: UITextField.textDidChangeNotification, object: emailTF)
+            .map { ($0.object as? UITextField)?.text }
+            .replaceNil(with: "")
+            .map {
+                self.isValidEmail(from: $0)
+            }
+        
+        emailPublisher.sink(receiveValue: { value in
+            self.emailTF.rightViewMode = value ? .never : .always
+        }).store(in: &cancellables)
+        
+        let passwordPublisher = NotificationCenter.default
+            .publisher(for: UITextField.textDidChangeNotification, object: passwordTF)
+            .map { ($0.object as? UITextField)?.text }
+            .replaceNil(with: "")
+            .map { $0.count >= 6 }
+        
+        emailPublisher.sink(receiveValue: { value in
+            self.emailTF.rightViewMode = value ? .never : .always
+        }).store(in: &cancellables)
+        
+        let confirmationPasswordPublisher = Publishers.Merge(
+            NotificationCenter.default
+                .publisher(for: UITextField.textDidChangeNotification, object: confirmPasswordTF)
+                .map { ($0.object as? UITextField)?.text }
+                .replaceNil(with: "")
+                .map { $0.elementsEqual(self.passwordTF.text ?? "") },
+            NotificationCenter.default
+                .publisher(for: UITextField.textDidChangeNotification, object: passwordTF)
+                .map { ($0.object as? UITextField)?.text }
+                .replaceNil(with: "")
+                .map { $0.elementsEqual(self.confirmPasswordTF.text ?? "") }
+        )
+        
+        confirmationPasswordPublisher.sink(receiveValue: { value in
+            self.confirmPasswordTF.rightViewMode = value ? .never : .always
+        }).store(in: &cancellables)
+        
+        let invaliedFieldPublisher = Publishers.CombineLatest4(namePublisher, emailPublisher, passwordPublisher, confirmationPasswordPublisher).map { name, email, password, confirmPassword in
+            name && email && password && confirmPassword
+        }
+        
+        invaliedFieldPublisher.sink(receiveValue: { isValid in
+            if isValid {
+                self.signUpButton.isEnabled = true
+                self.signUpButton.backgroundColor = UIColor.systemGreen
+            } else {
+                self.signUpButton.isEnabled = false
+                self.signUpButton.backgroundColor = UIColor.systemGray
+            }
+        }).store(in: &cancellables)
     }
     
     func setupTextFiels(for texField: UITextField) {
@@ -54,73 +117,17 @@ class ViewController: UIViewController {
         switch texField {
         case nameTF:
             button.addTarget(self, action: #selector(self.showNameExistAlert(_:)), for: .touchUpInside)
-            texField.addTarget(self, action: #selector(self.nameTextFieldDidChange(_:)), for: .editingChanged)
         case emailTF:
             button.addTarget(self, action: #selector(self.showEmailExistAlert(_:)), for: .touchUpInside)
-            texField.addTarget(self, action: #selector(self.emailTextFieldDidChange(_:)), for: .editingChanged)
         case passwordTF:
             button.addTarget(self, action: #selector(self.showPasswordExistAlert(_:)), for: .touchUpInside)
-            texField.addTarget(self, action: #selector(self.passwordTextFieldDidChange(_:)), for: .editingChanged)
         case confirmPasswordTF:
             button.addTarget(self, action: #selector(self.showConfirmPasswordExistAlert(_:)), for: .touchUpInside)
-            texField.addTarget(self, action: #selector(self.confirmPasswordTextFieldDidChange(_:)), for: .editingChanged)
         default:
             print("Text Not Found")
         }
         
         texField.rightView = button
-    }
-    
-    @objc func nameTextFieldDidChange(_ textField: UITextField) {
-        if let input = textField.text {
-            if input.isEmpty {
-                isNameValid = false
-                textField.rightViewMode = .always
-            } else {
-                isNameValid = true
-                textField.rightViewMode = .never
-            }
-            validateButton()
-        }
-    }
-    
-    @objc func emailTextFieldDidChange(_ textField: UITextField) {
-        if let input = textField.text {
-            if isValidEmail(from: input) {
-                isEmailValid = true
-                textField.rightViewMode = .never
-            } else {
-                isEmailValid = false
-                textField.rightViewMode = .always
-            }
-            validateButton()
-        }
-    }
-    
-    @objc func passwordTextFieldDidChange(_ textField: UITextField) {
-        if let input = textField.text {
-            if input.count < 6 {
-                isPasswordValid = false
-                textField.rightViewMode = .always
-            } else {
-                isPasswordValid = true
-                textField.rightViewMode = .never
-            }
-            validateButton()
-        }
-    }
-    
-    @objc func confirmPasswordTextFieldDidChange(_ textField: UITextField) {
-        if let input = textField.text, let password = passwordTF.text {
-            if input != password {
-                isConfirmPasswordValid = false
-                textField.rightViewMode = .always
-            } else {
-                isConfirmPasswordValid = true
-                textField.rightViewMode = .never
-            }
-            validateButton()
-        }
     }
     
     @IBAction func showNameExistAlert(_ sender: Any) {
@@ -167,16 +174,6 @@ class ViewController: UIViewController {
 
       let emailPred = NSPredicate(format: "SELF MATCHES %@", emailRegEx)
       return emailPred.evaluate(with: email)
-    }
-    
-    func validateButton() {
-        if isNameValid && isEmailValid && isPasswordValid && isConfirmPasswordValid {
-            signUpButton.isEnabled = true
-            signUpButton.backgroundColor = UIColor.systemGreen
-        } else {
-            signUpButton.isEnabled = false
-            signUpButton.backgroundColor = .systemGray
-        }
     }
 
 }
