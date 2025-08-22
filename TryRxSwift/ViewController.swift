@@ -6,6 +6,8 @@
 //
 
 import UIKit
+import RxSwift
+import RxCocoa
 
 class ViewController: UIViewController {
 
@@ -15,15 +17,12 @@ class ViewController: UIViewController {
     @IBOutlet weak var confirmPasswordTF: UITextField!
     @IBOutlet weak var signUpButton: UIButton!
     
-    private var isNameValid = false
-    private var isEmailValid = false
-    private var isPasswordValid = false
-    private var isConfirmPasswordValid = false
-    
+    let disposeBag = DisposeBag()
     
     override func viewDidLoad() {
         super.viewDidLoad()
         setupView()
+        setupRX()
     }
 
     func setupView() {
@@ -34,6 +33,77 @@ class ViewController: UIViewController {
         for textField in texFields {
             setupTextFiels(for: textField)
         }
+    }
+    
+    func setupRX() {
+        let nameStream = nameTF.rx.text
+            .orEmpty
+            .skip(1)
+            .map { !$0.isEmpty } // validation -> semua data yang dikembalikan (text) tidak kosong
+        
+        nameStream.subscribe(
+            onNext: { value in
+                self.nameTF.rightViewMode = value ? .never : .always
+            }
+        ).disposed(by: disposeBag)
+        
+        let emailStream = emailTF.rx.text
+            .orEmpty
+            .skip(1)
+            .map { self.isValidEmail(from: $0) }
+        
+        emailStream.subscribe(
+            onNext: { value in
+                self.emailTF.rightViewMode = value ? .never : .always
+            }
+        ).disposed(by: disposeBag)
+        
+        let passwordStream = passwordTF.rx.text
+            .orEmpty
+            .skip(1)
+            .map { $0.count > 5 }
+        
+        passwordStream.subscribe(
+            onNext: { value in
+                self.passwordTF.rightViewMode = value ? .never : .always
+            }
+        ).disposed(by: disposeBag)
+        
+        let confirmationPasswordStream = Observable.merge(
+            confirmPasswordTF.rx.text
+                .orEmpty
+                .skip(1)
+                .map { $0.elementsEqual(self.passwordTF.text ?? "") },
+            
+            passwordTF.rx.text
+                .orEmpty
+                .skip(1)
+                .map {
+                    $0.elementsEqual(self.confirmPasswordTF.text ?? "")
+                }
+        )
+        
+        confirmationPasswordStream.subscribe(
+            onNext: { value in
+                self.confirmPasswordTF.rightViewMode = value ? .never : .always
+            }
+        ).disposed(by: disposeBag)
+        
+        let invalidFieldStream = Observable.combineLatest(
+            nameStream,
+            emailStream,
+            passwordStream,
+            confirmationPasswordStream
+        ) { name, email, password, confirPassword in
+            name && email && password && confirPassword
+        }
+        
+        invalidFieldStream.subscribe(
+            onNext: { value in
+                self.signUpButton.isEnabled = value ? true : false
+                self.signUpButton.backgroundColor = value ? .systemGreen : .systemGray
+            }
+        ).disposed(by: disposeBag)
     }
     
     func setupTextFiels(for texField: UITextField) {
@@ -54,73 +124,17 @@ class ViewController: UIViewController {
         switch texField {
         case nameTF:
             button.addTarget(self, action: #selector(self.showNameExistAlert(_:)), for: .touchUpInside)
-            texField.addTarget(self, action: #selector(self.nameTextFieldDidChange(_:)), for: .editingChanged)
         case emailTF:
             button.addTarget(self, action: #selector(self.showEmailExistAlert(_:)), for: .touchUpInside)
-            texField.addTarget(self, action: #selector(self.emailTextFieldDidChange(_:)), for: .editingChanged)
         case passwordTF:
             button.addTarget(self, action: #selector(self.showPasswordExistAlert(_:)), for: .touchUpInside)
-            texField.addTarget(self, action: #selector(self.passwordTextFieldDidChange(_:)), for: .editingChanged)
         case confirmPasswordTF:
             button.addTarget(self, action: #selector(self.showConfirmPasswordExistAlert(_:)), for: .touchUpInside)
-            texField.addTarget(self, action: #selector(self.confirmPasswordTextFieldDidChange(_:)), for: .editingChanged)
         default:
             print("Text Not Found")
         }
         
         texField.rightView = button
-    }
-    
-    @objc func nameTextFieldDidChange(_ textField: UITextField) {
-        if let input = textField.text {
-            if input.isEmpty {
-                isNameValid = false
-                textField.rightViewMode = .always
-            } else {
-                isNameValid = true
-                textField.rightViewMode = .never
-            }
-            validateButton()
-        }
-    }
-    
-    @objc func emailTextFieldDidChange(_ textField: UITextField) {
-        if let input = textField.text {
-            if isValidEmail(from: input) {
-                isEmailValid = true
-                textField.rightViewMode = .never
-            } else {
-                isEmailValid = false
-                textField.rightViewMode = .always
-            }
-            validateButton()
-        }
-    }
-    
-    @objc func passwordTextFieldDidChange(_ textField: UITextField) {
-        if let input = textField.text {
-            if input.count < 6 {
-                isPasswordValid = false
-                textField.rightViewMode = .always
-            } else {
-                isPasswordValid = true
-                textField.rightViewMode = .never
-            }
-            validateButton()
-        }
-    }
-    
-    @objc func confirmPasswordTextFieldDidChange(_ textField: UITextField) {
-        if let input = textField.text, let password = passwordTF.text {
-            if input != password {
-                isConfirmPasswordValid = false
-                textField.rightViewMode = .always
-            } else {
-                isConfirmPasswordValid = true
-                textField.rightViewMode = .never
-            }
-            validateButton()
-        }
     }
     
     @IBAction func showNameExistAlert(_ sender: Any) {
@@ -169,15 +183,5 @@ class ViewController: UIViewController {
       return emailPred.evaluate(with: email)
     }
     
-    func validateButton() {
-        if isNameValid && isEmailValid && isPasswordValid && isConfirmPasswordValid {
-            signUpButton.isEnabled = true
-            signUpButton.backgroundColor = UIColor.systemGreen
-        } else {
-            signUpButton.isEnabled = false
-            signUpButton.backgroundColor = .systemGray
-        }
-    }
-
 }
 
